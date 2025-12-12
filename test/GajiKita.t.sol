@@ -196,7 +196,7 @@ contract GajiKitaTest is Test {
         gajiKita.withdrawSalary("CID001");
 
         // Check company rewards after salary withdrawal
-        (uint256 locked, uint256 totalRewards, uint256 withdrawnRewards) = gajiKita.getCompanyLiquidity(company1);
+        (, uint256 totalRewards, uint256 withdrawnRewards) = gajiKita.getCompanyLiquidity(company1);
         uint256 availableReward = totalRewards - withdrawnRewards;
 
         // Note: After employee salary withdrawal, company should have rewards if fees were generated

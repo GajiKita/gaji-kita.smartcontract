@@ -383,11 +383,14 @@ contract GajiKita is
      * This can only be called once to prevent misuse
      */
     function initialize(address _initialOwner) external {
-        // This function can be called by anyone to set up the admin mapping if not already set
-        // We'll use this as our primary access control mechanism for proxy deployments
-        if (admins[_initialOwner] == false) {
-            admins[_initialOwner] = true;
-        }
+        // Prevent re-initialization - check that the contract hasn't been initialized
+        // In the proxy context, the owner should still be address(0) if not init
+        // However, Ownable doesn't offer an easy initialization check
+        // We'll use our admin mapping as a proxy for initialization
+        require(!admins[_initialOwner], "Already initialized");
+
+        // Initialize the admin
+        admins[_initialOwner] = true;
     }
 
     /*//////////////////////////////////////////////////////////////
