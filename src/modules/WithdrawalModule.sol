@@ -65,13 +65,22 @@ abstract contract WithdrawalModule is LiquidityStorage, EmployeeStorage {
         // Mint receipt NFT
         _mintReceipt(msg.sender, Enums.TxType.EmployeeWithdrawSalary, eligibleAmount, _cid);
         
-        // Transfer the net amount to the employee
-        (bool success, ) = payable(_employeeId).call{value: netAmount}("");
+        // Transfer the net amount to the employee using hook
+        _payoutEmployee(_employeeId, netAmount);
+
+        emit Events.EmployeeSalaryWithdrawn(_employeeId, netAmount);
+    }
+
+    /**
+     * @dev Internal function to payout employee
+     * This must be overridden in the main contract to handle ETH vs ERC20 payouts
+     */
+    function _payoutEmployee(address to, uint256 amount) internal virtual {
+        // Default implementation transfers ETH; this will be overridden in main contract
+        (bool success, ) = payable(to).call{value: amount}("");
         if (!success) {
             revert Errors.TransferNotAllowed();
         }
-        
-        emit Events.EmployeeSalaryWithdrawn(_employeeId, netAmount);
     }
 
     /**

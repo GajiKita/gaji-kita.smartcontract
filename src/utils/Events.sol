@@ -19,4 +19,6 @@ library Events {
     event PlatformFeeWithdrawn(address indexed platform, uint256 amount);
     event ReceiptMinted(uint256 indexed tokenId, address indexed to, Enums.TxType txType, uint256 amount, string cid);
     event FeeConfigUpdated(uint256 platformShare, uint256 companyShare, uint256 investorShare, uint256 feeBps);
+    event Erc20Initialized(address settlementToken, address agniRouter);
+    event PreferredPayoutTokenSet(address indexed employee, address token);
 }

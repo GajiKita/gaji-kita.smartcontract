@@ -97,11 +97,8 @@ abstract contract LiquidityPoolModule is LiquidityStorage, CompanyStorage {
         // Deduct from total pool liquidity
         _updatePoolLiquidity(_amount, false); // subtract
         
-        // Transfer amount to investor
-        (bool success, ) = payable(_investorId).call{value: _amount}("");
-        if (!success) {
-            revert Errors.TransferNotAllowed();
-        }
+        // Transfer amount to investor using payout hook
+        _payout(_investorId, _amount);
         
         emit Events.InvestorWithdrawn(_investorId, _amount);
         _mintReceipt(msg.sender, Enums.TxType.InvestorWithdraw, _amount, _cid);
@@ -125,11 +122,8 @@ abstract contract LiquidityPoolModule is LiquidityStorage, CompanyStorage {
         // Increase total withdrawn rewards counter
         companies[_companyId].withdrawnRewards += _amount;
 
-        // Transfer amount to company
-        (bool success, ) = payable(_companyId).call{value: _amount}("");
-        if (!success) {
-            revert Errors.TransferNotAllowed();
-        }
+        // Transfer amount to company using payout hook
+        _payout(_companyId, _amount);
 
         emit Events.CompanyRewardWithdrawn(_companyId, _amount);
         _mintReceipt(msg.sender, Enums.TxType.CompanyRewardWithdraw, _amount, _cid);
@@ -154,11 +148,8 @@ abstract contract LiquidityPoolModule is LiquidityStorage, CompanyStorage {
         // Increase total withdrawn rewards counter
         investors[_investorId].withdrawnRewards += reward;
 
-        // Transfer amount to investor
-        (bool success, ) = payable(_investorId).call{value: reward}("");
-        if (!success) {
-            revert Errors.TransferNotAllowed();
-        }
+        // Transfer amount to investor using payout hook
+        _payout(_investorId, reward);
 
         emit Events.InvestorRewardWithdrawn(_investorId, reward);
         _mintReceipt(msg.sender, Enums.TxType.InvestorRewardWithdraw, reward, _cid);
@@ -175,15 +166,18 @@ abstract contract LiquidityPoolModule is LiquidityStorage, CompanyStorage {
         // Update platform fee balance
         poolData.platformFeeBalance -= _amount;
         
-        // Transfer amount to platform
-        (bool success, ) = payable(_platform).call{value: _amount}("");
-        if (!success) {
-            revert Errors.TransferNotAllowed();
-        }
+        // Transfer amount to platform using payout hook
+        _payout(_platform, _amount);
         
         emit Events.PlatformFeeWithdrawn(_platform, _amount);
         _mintReceipt(msg.sender, Enums.TxType.PlatformFeeWithdraw, _amount, _cid);
     }
+
+    /**
+     * @dev Internal function to payout rewards
+     * This must be overridden in the main contract to handle ETH vs ERC20 payouts
+     */
+    function _payout(address to, uint256 amount) internal virtual;
 
     /**
      * @dev Updates pool liquidity

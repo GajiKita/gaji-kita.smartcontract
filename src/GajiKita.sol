@@ -2,6 +2,9 @@
 pragma solidity ^0.8.20;
 
 import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {CompanyModule} from "./modules/CompanyModule.sol";
 import {EmployeeModule} from "./modules/EmployeeModule.sol";
 import {WithdrawalModule} from "./modules/WithdrawalModule.sol";
@@ -11,6 +14,9 @@ import {ReceiptNFTModule} from "./modules/ReceiptNFTModule.sol";
 import {Constants} from "./utils/Constants.sol";
 import {Enums} from "./utils/Enums.sol";
 import {Errors} from "./utils/Errors.sol";
+import {Events} from "./utils/Events.sol";
+import {IAgniRouter} from "./utils/TokenInterfaces.sol";
+
 
 /**
  * @title GajiKita
@@ -23,9 +29,16 @@ contract GajiKita is
     FeeModule,
     LiquidityPoolModule,
     ReceiptNFTModule,
-    IERC721Receiver
+    IERC721Receiver,
+    ReentrancyGuard
 {
     mapping(address => bool) private admins;
+
+    // ERC20 Settlement Token Variables
+    address public settlementToken;  // ERC20 used as accounting base (e.g., USDC)
+    address public agniRouter;       // router on Mantle
+    mapping(address => address) public preferredPayoutToken; // employee -> token
+    bool public erc20Enabled;        // switch mode (ETH legacy vs ERC20)
 
     modifier onlyAdmin() {
         _onlyAdmin();
@@ -39,6 +52,32 @@ contract GajiKita is
     }
 
     /**
+     * @dev Initialize ERC20 configuration
+     * Can be called only by owner or admin, and only once
+     */
+    function initializeErc20(
+        address _settlementToken,
+        address _agniRouter
+    ) external {
+        // Check if caller is either owner or admin
+        if ((msg.sender != owner()) && !admins[msg.sender]) {
+            revert Errors.Unauthorized();
+        }
+
+        // Check if already initialized
+        if (erc20Enabled) {
+            revert Errors.Unauthorized(); // Using Unauthorized as "already initialized"
+        }
+
+        // Initialize ERC20 configuration
+        settlementToken = _settlementToken;
+        agniRouter = _agniRouter;
+        erc20Enabled = true;
+
+        emit Events.Erc20Initialized(_settlementToken, _agniRouter);
+    }
+
+    /**
      * @dev Constructor - Initializes the contract and default fee configuration
      */
     constructor(address _initialOwner) ReceiptNFTModule(_initialOwner) {
@@ -46,6 +85,15 @@ contract GajiKita is
 
         // Initialize default fee configuration: 80% platform, 20% company, 0% investor, 1% fee
         _initializeFeeConfig(8000, 2000, 0, 100); // 80% platform, 20% company, 0% investor, 1% fee (100 bps)
+    }
+
+    /**
+     * @dev Function to set preferred payout token for employee
+     */
+    function setPreferredPayoutToken(address token) external onlyEmployee(msg.sender) {
+        preferredPayoutToken[msg.sender] = token;
+
+        emit Events.PreferredPayoutTokenSet(msg.sender, token);
     }
 
     /**
@@ -76,7 +124,7 @@ contract GajiKita is
     function lockCompanyLiquidity(
         uint256 _amount,
         string memory _cid
-    ) external payable onlyCompany(msg.sender) {
+    ) external payable onlyCompany(msg.sender) nonReentrant {
         if (msg.value != _amount) {
             revert Errors.InvalidAmount();
         }
@@ -86,7 +134,7 @@ contract GajiKita is
     /**
      * @dev Allows an investor to deposit liquidity
      */
-    function depositInvestorLiquidity(string memory _cid) external payable {
+    function depositInvestorLiquidity(string memory _cid) external payable nonReentrant {
         if (msg.value == 0) {
             revert Errors.InvalidAmount();
         }
@@ -94,11 +142,29 @@ contract GajiKita is
     }
 
     /**
+     * @dev Allows a company to lock liquidity using tokens
+     */
+    function lockCompanyLiquidityToken(uint256 amount, string calldata cid) external onlyCompany(msg.sender) nonReentrant {
+        require(erc20Enabled, "ERC20 not enabled");
+        SafeERC20.safeTransferFrom(IERC20(settlementToken), msg.sender, address(this), amount);
+        _lockCompanyLiquidity(msg.sender, amount, cid);
+    }
+
+    /**
+     * @dev Allows an investor to deposit liquidity using tokens
+     */
+    function depositInvestorLiquidityToken(uint256 amount, string calldata cid) external nonReentrant {
+        require(erc20Enabled, "ERC20 not enabled");
+        SafeERC20.safeTransferFrom(IERC20(settlementToken), msg.sender, address(this), amount);
+        _depositInvestorLiquidity(msg.sender, amount, cid);
+    }
+
+    /**
      * @dev Allows an employee to withdraw salary
      */
     function withdrawSalary(
         string memory _cid
-    ) external onlyEmployee(msg.sender) {
+    ) external onlyEmployee(msg.sender) nonReentrant {
         _withdrawEmployeeSalary(msg.sender, _cid);
     }
 
@@ -108,7 +174,7 @@ contract GajiKita is
     function withdrawCompanyReward(
         uint256 _amount,
         string memory _cid
-    ) external onlyCompany(msg.sender) {
+    ) external onlyCompany(msg.sender) nonReentrant {
         _withdrawCompanyReward(msg.sender, _amount, _cid);
     }
 
@@ -118,7 +184,7 @@ contract GajiKita is
     function withdrawInvestorReward(
         uint256 _amount,
         string memory _cid
-    ) external {
+    ) external nonReentrant {
         if (!investors[msg.sender].exists) {
             revert Errors.InvestorNotFound();
         }
@@ -128,7 +194,7 @@ contract GajiKita is
     /**
      * @dev Allows an investor to withdraw all liquidity
      */
-    function withdrawAllInvestorLiquidity(string memory _cid) external {
+    function withdrawAllInvestorLiquidity(string memory _cid) external nonReentrant {
         if (!investors[msg.sender].exists) {
             revert Errors.InvestorNotFound();
         }
@@ -139,7 +205,7 @@ contract GajiKita is
     /**
      * @dev Allows platform owner to withdraw fee
      */
-    function withdrawPlatformFee(uint256 _amount, string memory _cid) external {
+    function withdrawPlatformFee(uint256 _amount, string memory _cid) external nonReentrant {
         // Check if caller is either the owner (via Ownable) or in our admin mapping
         if ((msg.sender != owner()) && !admins[msg.sender]) {
             revert Errors.Unauthorized();
@@ -520,5 +586,138 @@ contract GajiKita is
             config.investorShare,
             config.feeBps
         );
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                            PAYOUT FUNCTION IMPLEMENTATIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @dev Implementation of the employee payout function
+     * If erc20Enabled is false, pays in ETH
+     * If erc20Enabled is true, pays in settlementToken or swapped token
+     */
+    function _payoutEmployee(address to, uint256 amount) internal override(WithdrawalModule) {
+        if (!erc20Enabled) {
+            // Legacy ETH payout
+            (bool success, ) = payable(to).call{value: amount}("");
+            if (!success) {
+                revert Errors.TransferNotAllowed();
+            }
+        } else {
+            // ERC20 payout in settlement token only (no swap)
+            SafeERC20.safeTransfer(IERC20(settlementToken), to, amount);
+        }
+    }
+
+    /**
+     * @dev Implementation of the general payout function
+     * If erc20Enabled is false, pays in ETH
+     * If erc20Enabled is true, pays in settlementToken (no swaps for rewards)
+     */
+    function _payout(address to, uint256 amount) internal override(LiquidityPoolModule) {
+        if (!erc20Enabled) {
+            // Legacy ETH payout
+            (bool success, ) = payable(to).call{value: amount}("");
+            if (!success) {
+                revert Errors.TransferNotAllowed();
+            }
+        } else {
+            // ERC20 payout in settlement token (no swaps for rewards/principal)
+            SafeERC20.safeTransfer(IERC20(settlementToken), to, amount);
+        }
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                            SWAPPING FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+
+    /**
+     * @dev Allows an employee to withdraw salary with optional token swap for preferred payout
+     */
+    function withdrawSalaryWithSwap(
+        string calldata cid,
+        uint256 minOut,
+        uint256 deadline
+    ) external onlyEmployee(msg.sender) nonReentrant {
+        require(erc20Enabled, "ERC20 not enabled");
+        _withdrawEmployeeSalaryWithSwap(msg.sender, cid, minOut, deadline);
+    }
+
+    /**
+     * @dev Internal function to withdraw employee salary with token swap
+     */
+    function _withdrawEmployeeSalaryWithSwap(
+        address employeeId,
+        string memory cid,
+        uint256 minOut,
+        uint256 deadline
+    ) internal virtual {
+        Employee storage emp = employees[employeeId];
+        if (!emp.exists) {
+            revert Errors.EmployeeNotFound();
+        }
+
+        uint256 eligibleAmount = _calculateEmployeeEligibleWithdrawal(employeeId);
+        if (eligibleAmount == 0) {
+            revert Errors.InvalidAmount();
+        }
+
+        // Calculate fees
+        (uint256 feeTotal, uint256 platformPart, uint256 companyPart,) =
+            _calculateFee(eligibleAmount);
+
+        uint256 netAmount = eligibleAmount - feeTotal;
+
+        // Check if there's enough liquidity in the pool
+        if (poolData.totalLiquidity < eligibleAmount) {
+            revert Errors.InsufficientLiquidity();
+        }
+
+        // Deduct from pool
+        _updatePoolLiquidity(eligibleAmount, false); // subtract
+
+        // Update fee balances
+        poolData.platformFeeBalance += platformPart;
+
+        // Add to company reward (as a portion goes to company)
+        _updateCompanyReward(emp.companyId, companyPart, true);
+
+        // Investors get a portion too
+        // Note: This is simplified; in practice, investor rewards are typically handled differently
+
+        // Update employee withdrawn amount
+        _updateEmployeeWithdrawnAmount(employeeId, netAmount);
+
+        // Mint receipt NFT
+        _mintReceipt(msg.sender, Enums.TxType.EmployeeWithdrawSalary, eligibleAmount, cid);
+
+        // Determine desired token for payout
+        address desiredToken = preferredPayoutToken[employeeId];
+        if (desiredToken == address(0)) {
+            desiredToken = settlementToken;
+        }
+
+        if (desiredToken == settlementToken) {
+            // Direct settlement token payout
+            SafeERC20.safeTransfer(IERC20(settlementToken), employeeId, netAmount);
+        } else {
+            // Approve settlement token for swap - first reset to 0, then set desired amount
+            IERC20(settlementToken).approve(agniRouter, 0);
+            IERC20(settlementToken).approve(agniRouter, netAmount);
+            address[] memory path = new address[](2);
+            path[0] = settlementToken;
+            path[1] = desiredToken;
+
+            IAgniRouter(agniRouter).swapExactTokensForTokens(
+                netAmount,
+                minOut,
+                path,
+                employeeId,
+                deadline
+            );
+        }
+
+        emit Events.EmployeeSalaryWithdrawn(employeeId, netAmount);
     }
 }
