@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.30;
 
 import {LiquidityStorage} from "../storage/LiquidityStorage.sol";
 import {CompanyStorage} from "../storage/CompanyStorage.sol";
@@ -132,27 +132,27 @@ abstract contract LiquidityPoolModule is LiquidityStorage, CompanyStorage {
     /**
      * @dev Withdraws investor reward
      */
-    function _withdrawInvestorReward(address _investorId, uint256 /* _amount */, string memory _cid) internal {
+    function _withdrawInvestorReward(address _investorId, uint256 _amount, string memory _cid) internal {
         if (!investors[_investorId].exists) {
             revert Errors.InvestorNotFound();
         }
 
         uint256 reward = investors[_investorId].rewardBalance;
-        if (reward == 0) {
+        if (_amount == 0 || reward < _amount) {
             revert Errors.InsufficientBalance();
         }
 
-        // Update investor reward balance (withdraw full reward)
-        investors[_investorId].rewardBalance = 0;
+        // Update investor reward balance (partial or full withdraw)
+        investors[_investorId].rewardBalance = reward - _amount;
 
         // Increase total withdrawn rewards counter
-        investors[_investorId].withdrawnRewards += reward;
+        investors[_investorId].withdrawnRewards += _amount;
 
         // Transfer amount to investor using payout hook
-        _payout(_investorId, reward);
+        _payout(_investorId, _amount);
 
-        emit Events.InvestorRewardWithdrawn(_investorId, reward);
-        _mintReceipt(msg.sender, Enums.TxType.InvestorRewardWithdraw, reward, _cid);
+        emit Events.InvestorRewardWithdrawn(_investorId, _amount);
+        _mintReceipt(msg.sender, Enums.TxType.InvestorRewardWithdraw, _amount, _cid);
     }
 
     /**

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.30;
+
+import {Enums} from "../utils/Enums.sol";
 
 /**
  * @title CompanyStorage
@@ -13,6 +15,7 @@ contract CompanyStorage {
         uint256 lockedLiquidity;
         uint256 rewardBalance;  // Available rewards to withdraw
         uint256 withdrawnRewards; // Total rewards withdrawn so far
+        Enums.CompanyStatus status;
         bool exists;
     }
 

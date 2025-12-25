@@ -8,15 +8,21 @@ Arsitektur dan alur inti
 - Liquidity: perusahaan mengunci ETH dengan `lockCompanyLiquidity` (harus `msg.value == _amount`) dan investor menambah dana dengan `depositInvestorLiquidity`. Pool liquidity tercatat di `poolData.totalLiquidity`; likuiditas investor saja dilacak di `totalInvestorLiquidity`.
 - Penarikan gaji: employee dapat tarik hingga min((salary/30 * daysWorked), 30% salary). `_withdrawEmployeeSalary` memotong fee, mengurangi pool liquidity, menambah `platformFeeBalance` dan `companies[companyId].rewardBalance`, lalu mendistribusikan bagian investor secara pro-rata ke `investors[*].rewardBalance` berdasarkan share likuiditas.
 - Rewards/fee: default konfigurasi di konstruktor = 80% platform, 20% company, 0% investor, fee 1% (100 bps). Distribusi fee kini menyalurkan porsi investor; investor dapat menarik reward akumulatifnya.
+ - Akses kontrol: owner ditentukan oleh konstruktor `ReceiptNFTModule` dan tidak bisa di-transfer; admin adalah mapping yang bisa ditambah/dihapus oleh owner/admin. Fungsi `initialize` hanya men-set admin saat lewat proxy dan bisa dipanggil siapa saja (idempotent pada alamat yang sama).
+ - Token settlement & router: konstruktor sekarang menerima `settlementToken` dan `router` per deploy. Jika `settlementToken` non-zero, ERC20 mode aktif sejak awal, router wajib non-zero, dan event `Erc20Initialized` dipicu. Jika zero, kontrak berjalan mode ETH legacy; employee masih bisa memilih payout token saat ERC20 diaktifkan.
+- Status perusahaan: setiap company punya `status` (Enabled/Disabled). Admin/owner dapat memanggil `enableCompany`/`disableCompany`; `onlyCompany` dan penambahan karyawan memeriksa status ini, sehingga perusahaan yang disabled tidak bisa mengunci likuiditas atau menerima karyawan baru hingga di-enable kembali.
+- Alamat perusahaan dapat diganti oleh admin/owner melalui `updateCompanyAddress(oldAddr, newAddr)`. Migrasi memindahkan data perusahaan, memperbarui `companyList`, dan mengalihkan `companyId` pada seluruh karyawan. Pastikan `newAddr` belum terdaftar.
 - Receipt NFT: setiap transaksi utama memanggil `_mintReceipt` pada `ReceiptNFTModule` (soulbound ERC721). Metadata yang tersimpan: `txType`, `amount`, `timestamp`, `cid`.
 - Proxy: `src/Proxy.sol` adalah proxy minimal dengan storage slot custom dan `delegatecall` di fallback/receive. Tidak ada fungsi upgrade/admin; test memanipulasi slot langsung (`vm.store`). Tidak ada guard terhadap proxy-call reentrancy.
 
 Liquidity & Investor Reward Model
-- Investor berperan sebagai LP; deposit menambah `totalInvestorLiquidity` dan total pool. Saat employee withdraw, fee dibagi platform/company/investor dan porsi investor didistribusikan pro-rata: `rewardShare = deposited / totalInvestorLiquidity * investorPart`. Reward akumulatif disimpan di `investors[*].rewardBalance` dan dapat ditarik terpisah dari principal; penarikan reward selalu mengosongkan saldo reward.
+- Investor berperan sebagai LP; deposit menambah `totalInvestorLiquidity` dan total pool. Saat employee withdraw, fee dibagi platform/company/investor dan porsi investor didistribusikan pro-rata: `rewardShare = deposited / totalInvestorLiquidity * investorPart`. Reward akumulatif disimpan di `investors[*].rewardBalance` dan dapat ditarik terpisah dari principal; penarikan reward boleh parsial/utuh selama tidak melebihi saldo.
 - Invariant: menghitung `investorPart` tanpa mendistribusikan dianggap bug bisnis; reward investor tidak boleh di-drop diam-diam.
 
-Catatan risiko/ketidaklengkapan
+- Catatan risiko/ketidaklengkapan
 - Distribusi investor reward memakai loop per investor (naif, O(n)); cukup untuk MVP, perlu index-based accounting untuk skala besar.
+ - Disable company tidak menarik/menahan saldo apa pun; admin harus mengelola implikasi bisnis sendiri (tidak ada auto-refund/liquidation).
+- Update alamat perusahaan melakukan loop atas `companyList` dan `employeeList` (O(n)); gas dapat membesar bila daftar panjang.
 - `rewardBalance` perusahaan hanya bertambah dari potongan fee saat employee withdraw; `withdrawCompanyReward` akan revert bila belum ada fee yang dikumpulkan.
 - Tidak ada mekanisme transfer ownership atau pause; admin mapping bisa ditambah/dihapus, tetapi owner tidak dapat dicabut dan hanya diset saat deploy.
 - Tidak ada perlindungan reentrancy untuk operasi yang mengirim ETH (lock/withdraw). Fee/liq per perusahaan tidak mempertimbangkan `totalSalary` (field belum pernah di-update).

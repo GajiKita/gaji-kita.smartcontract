@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.30;
 
 import {EmployeeStorage} from "../storage/EmployeeStorage.sol";
+import {Enums} from "../utils/Enums.sol";
 import {Errors} from "../utils/Errors.sol";
 import {Events} from "../utils/Events.sol";
 
@@ -40,6 +41,9 @@ contract EmployeeModule is EmployeeStorage {
         // Verify company exists
         if (!companies[_companyId].exists) {
             revert Errors.CompanyNotFound();
+        }
+        if (companies[_companyId].status != Enums.CompanyStatus.Enabled) {
+            revert Errors.CompanyDisabled();
         }
         
         employees[_employeeId] = Employee({

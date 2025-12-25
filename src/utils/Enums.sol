@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.30;
 
 /**
  * @title Enums
@@ -15,5 +15,10 @@ library Enums {
         CompanyRewardWithdraw,
         InvestorRewardWithdraw,
         PlatformFeeWithdraw
+    }
+
+    enum CompanyStatus {
+        Disabled,
+        Enabled
     }
 }

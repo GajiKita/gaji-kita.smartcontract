@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {GajiKita, Errors} from "../src/GajiKita.sol";
+import {MockERC20} from "./mocks/MockERC20.sol";
 import {Proxy} from "../src/Proxy.sol";
 
 contract ProxyTest is Test {
     GajiKita gajiKitaImplementation;
     Proxy proxy;
     GajiKita gajiKitaProxy;
+    MockERC20 settlementToken;
 
     address owner = address(1);
     address admin = address(2);
@@ -20,8 +22,16 @@ contract ProxyTest is Test {
     address investor2 = address(8);
 
     function setUp() public {
+        settlementToken = new MockERC20("Mock USDC", "mUSDC");
         // Deploy the implementation contract
-        gajiKitaImplementation = new GajiKita(owner);
+        gajiKitaImplementation = new GajiKita(
+            owner,
+            address(settlementToken),
+            address(111),
+            address(112),
+            address(113),
+            address(settlementToken)
+        );
 
         // Deploy the proxy and initialize it with the implementation
         proxy = new Proxy(address(gajiKitaImplementation), owner);
@@ -165,6 +175,52 @@ contract ProxyTest is Test {
         assertEq(withdrawnAmount, expected);
     }
 
+    function testProxyCompanyDisableEnableAndUpdateAddress() public {
+        vm.prank(owner);
+        gajiKitaProxy.addAdmin(admin);
+
+        vm.prank(admin);
+        gajiKitaProxy.registerCompany(company1, "Company ABC");
+
+        // Disable company should block actions
+        vm.prank(admin);
+        gajiKitaProxy.disableCompany(company1);
+
+        vm.deal(company1, 1 ether);
+        vm.prank(company1);
+        vm.expectRevert(abi.encodeWithSelector(Errors.CompanyDisabled.selector));
+        gajiKitaProxy.lockCompanyLiquidity{value: 1 ether}(1 ether, "CID");
+
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(Errors.CompanyDisabled.selector));
+        gajiKitaProxy.addEmployee(employee1, company1, "John Doe", 1000 ether);
+
+        // Enable company restores actions
+        vm.prank(admin);
+        gajiKitaProxy.enableCompany(company1);
+
+        vm.deal(company1, 1 ether);
+        vm.prank(company1);
+        gajiKitaProxy.lockCompanyLiquidity{value: 1 ether}(1 ether, "CID");
+        assertEq(gajiKitaProxy.getTotalLiquidity(), 1 ether);
+
+        // Add employee then update company address
+        vm.prank(admin);
+        gajiKitaProxy.addEmployee(employee1, company1, "John Doe", 1000 ether);
+
+        vm.prank(admin);
+        gajiKitaProxy.updateCompanyAddress(company1, company2);
+
+        (bool existsOld, ) = gajiKitaProxy.getCompanyInfo(company1);
+        assertFalse(existsOld);
+
+        (bool existsNew, ) = gajiKitaProxy.getCompanyInfo(company2);
+        assertTrue(existsNew);
+
+        (, address companyId, , , , ) = gajiKitaProxy.getEmployeeInfo(employee1);
+        assertEq(companyId, company2);
+    }
+
     function testProxyInvestorOperations() public {
         vm.prank(owner);
         gajiKitaProxy.addAdmin(admin);
@@ -173,9 +229,11 @@ contract ProxyTest is Test {
         gajiKitaProxy.registerCompany(company1, "Company ABC");
 
         // Investor deposits liquidity through proxy
-        vm.deal(investor1, 5 ether);
+        settlementToken.mint(investor1, 5 ether);
         vm.prank(investor1);
-        gajiKitaProxy.depositInvestorLiquidity{value: 5 ether}("CID001");
+        settlementToken.approve(address(gajiKitaProxy), 5 ether);
+        vm.prank(investor1);
+        gajiKitaProxy.depositInvestorLiquidityToken(5 ether, "CID001");
 
         (bool exists, uint256 deposited, , ) = gajiKitaProxy.getInvestor(
             investor1
@@ -186,7 +244,14 @@ contract ProxyTest is Test {
 
     function testUpgradeImplementation() public {
         // Create a new version of the implementation
-        GajiKita newImplementation = new GajiKita(owner);
+        GajiKita newImplementation = new GajiKita(
+            owner,
+            address(settlementToken),
+            address(111),
+            address(112),
+            address(113),
+            address(settlementToken)
+        );
 
         // Upgrade the proxy to the new implementation
         // Note: In a real scenario, upgrading would typically be done by the admin
@@ -266,7 +331,7 @@ contract ProxyTest is Test {
 
         vm.prank(investor1);
         vm.expectRevert(abi.encodeWithSelector(Errors.InvalidAmount.selector));
-        gajiKitaProxy.depositInvestorLiquidity{value: 0}("CID001");
+        gajiKitaProxy.depositInvestorLiquidityToken(0, "CID001");
     }
 
     function testWithdrawSalaryByNonEmployeeFailsThroughProxy() public {
@@ -323,9 +388,11 @@ contract ProxyTest is Test {
         vm.prank(admin);
         gajiKitaProxy.registerCompany(company1, "Company ABC");
 
-        vm.deal(investor1, 5 ether);
+        settlementToken.mint(investor1, 5 ether);
         vm.prank(investor1);
-        gajiKitaProxy.depositInvestorLiquidity{value: 5 ether}("CID001");
+        settlementToken.approve(address(gajiKitaProxy), 5 ether);
+        vm.prank(investor1);
+        gajiKitaProxy.depositInvestorLiquidityToken(5 ether, "CID001");
 
         vm.prank(investor1);
         gajiKitaProxy.withdrawAllInvestorLiquidity("CID001");
@@ -344,13 +411,24 @@ contract ProxyIntegrationTest is Test {
     GajiKita gajiKitaImplementation;
     Proxy proxy;
     GajiKita gajiKitaProxy;
-
+    MockERC20 settlementToken;
     address owner = address(1);
     address admin = address(2);
+    address dummyRouter = address(111);
+    address dummyFactory = address(112);
+    address dummyWNative = address(113);
 
     function setUp() public {
+        settlementToken = new MockERC20("Mock USDC", "mUSDC");
         // Deploy the implementation contract
-        gajiKitaImplementation = new GajiKita(owner);
+        gajiKitaImplementation = new GajiKita(
+            owner,
+            address(settlementToken),
+            dummyRouter,
+            dummyFactory,
+            dummyWNative,
+            address(settlementToken)
+        );
 
         // Deploy the proxy and initialize it with the implementation
         proxy = new Proxy(address(gajiKitaImplementation), owner);
@@ -394,14 +472,18 @@ contract ProxyIntegrationTest is Test {
         gajiKitaProxy.updateEmployeeDaysWorked(address(4), 22);
 
         // Company adds much more liquidity to cover salary withdrawal and fees
-        vm.deal(address(3), 2000 ether);
+        settlementToken.mint(address(3), 2000 ether);
         vm.prank(address(3));
-        gajiKitaProxy.lockCompanyLiquidity{value: 2000 ether}(2000 ether, "CID001");
+        settlementToken.approve(address(gajiKitaProxy), 2000 ether);
+        vm.prank(address(3));
+        gajiKitaProxy.lockCompanyLiquidityToken(2000 ether, "CID001");
 
         // Investor also adds more liquidity to participate in fee distribution
-        vm.deal(address(5), 500 ether);
+        settlementToken.mint(address(5), 500 ether);
         vm.prank(address(5));
-        gajiKitaProxy.depositInvestorLiquidity{value: 500 ether}("CID001");
+        settlementToken.approve(address(gajiKitaProxy), 500 ether);
+        vm.prank(address(5));
+        gajiKitaProxy.depositInvestorLiquidityToken(500 ether, "CID001");
 
         // Employee withdraws salary
         vm.prank(address(4));

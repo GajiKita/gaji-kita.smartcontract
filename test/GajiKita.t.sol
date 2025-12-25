@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {GajiKita, Errors} from "../src/GajiKita.sol";
-// import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
+import {MockERC20} from "./mocks/MockERC20.sol";
 
 contract GajiKitaTest is Test {
     GajiKita gajiKita;
+    MockERC20 settlementToken;
 
     address owner = address(1);
     address admin = address(2);
@@ -18,7 +19,9 @@ contract GajiKitaTest is Test {
     address investor2 = address(8);
 
     function setUp() public {
-        gajiKita = new GajiKita(owner);
+        settlementToken = new MockERC20("Mock USDC", "mUSDC");
+        // Dummy router/factory/wNative/anchor for tests
+        gajiKita = new GajiKita(owner, address(settlementToken), address(111), address(112), address(113), address(settlementToken));
 
         // Add admin
         vm.prank(owner);
@@ -78,9 +81,11 @@ contract GajiKitaTest is Test {
         vm.prank(admin);
         gajiKita.registerCompany(company1, "Company ABC");
 
-        vm.deal(company1, 20 ether);
+        settlementToken.mint(company1, 20 ether);
         vm.prank(company1);
-        gajiKita.lockCompanyLiquidity{value: 20 ether}(20 ether, "CID001");
+        settlementToken.approve(address(gajiKita), 20 ether);
+        vm.prank(company1);
+        gajiKita.lockCompanyLiquidityToken(20 ether, "CID001");
 
         (uint256 locked, , ) = gajiKita.getCompanyLiquidity(company1);
         assertEq(locked, 20 ether);
@@ -103,9 +108,11 @@ contract GajiKitaTest is Test {
         vm.prank(admin);
         gajiKita.registerCompany(company1, "Company ABC");
 
-        vm.deal(investor1, 5 ether);
+        settlementToken.mint(investor1, 5 ether);
         vm.prank(investor1);
-        gajiKita.depositInvestorLiquidity{value: 5 ether}("CID001");
+        settlementToken.approve(address(gajiKita), 5 ether);
+        vm.prank(investor1);
+        gajiKita.depositInvestorLiquidityToken(5 ether, "CID001");
 
         (bool exists, uint256 deposited, , ) = gajiKita.getInvestor(investor1);
         assertTrue(exists);
@@ -113,12 +120,6 @@ contract GajiKitaTest is Test {
 
         uint256 totalLiquidity = gajiKita.getTotalLiquidity();
         assertEq(totalLiquidity, 5 ether);
-    }
-
-    function testDepositInvestorLiquidityZeroValueFails() public {
-        vm.prank(investor1);
-        vm.expectRevert(abi.encodeWithSelector(Errors.InvalidAmount.selector));
-        gajiKita.depositInvestorLiquidity{value: 0}("CID001");
     }
 
     function testWithdrawSalary() public {
@@ -133,9 +134,11 @@ contract GajiKitaTest is Test {
         gajiKita.updateEmployeeDaysWorked(employee1, 15);
 
         // Company locks much more liquidity to definitely cover salary withdrawal and fees
-        vm.deal(company1, 1000 ether);
+        settlementToken.mint(company1, 1000 ether);
         vm.prank(company1);
-        gajiKita.lockCompanyLiquidity{value: 1000 ether}(1000 ether, "CID001");
+        settlementToken.approve(address(gajiKita), 1000 ether);
+        vm.prank(company1);
+        gajiKita.lockCompanyLiquidityToken(1000 ether, "CID001");
 
         // Check eligible withdrawal amount
         uint256 eligible = gajiKita.calculateEmployeeEligibleWithdrawal(
@@ -182,14 +185,18 @@ contract GajiKitaTest is Test {
         gajiKita.updateEmployeeDaysWorked(employee1, 15);
 
         // Company locks much more liquidity to cover the employee's potential withdrawal and fees
-        vm.deal(company1, 2000 ether);
+        settlementToken.mint(company1, 2000 ether);
         vm.prank(company1);
-        gajiKita.lockCompanyLiquidity{value: 2000 ether}(2000 ether, "CID001");
+        settlementToken.approve(address(gajiKita), 2000 ether);
+        vm.prank(company1);
+        gajiKita.lockCompanyLiquidityToken(2000 ether, "CID001");
 
         // Investor adds liquidity (creates opportunity for fees to generate rewards)
-        vm.deal(investor1, 500 ether);
+        settlementToken.mint(investor1, 500 ether);
         vm.prank(investor1);
-        gajiKita.depositInvestorLiquidity{value: 500 ether}("CID001");
+        settlementToken.approve(address(gajiKita), 500 ether);
+        vm.prank(investor1);
+        gajiKita.depositInvestorLiquidityToken(500 ether, "CID001");
 
         // Employee withdraws salary - this generates fees that create rewards
         vm.prank(employee1);
@@ -237,14 +244,18 @@ contract GajiKitaTest is Test {
         gajiKita.updateEmployeeDaysWorked(employee1, 15);
 
         // Company locks much more liquidity to cover the employee's potential withdrawal and fees
-        vm.deal(company1, 2000 ether);
+        settlementToken.mint(company1, 2000 ether);
         vm.prank(company1);
-        gajiKita.lockCompanyLiquidity{value: 2000 ether}(2000 ether, "CID001");
+        settlementToken.approve(address(gajiKita), 2000 ether);
+        vm.prank(company1);
+        gajiKita.lockCompanyLiquidityToken(2000 ether, "CID001");
 
         // Investor adds liquidity (creates opportunity for fees to generate rewards)
-        vm.deal(investor1, 500 ether);
+        settlementToken.mint(investor1, 500 ether);
         vm.prank(investor1);
-        gajiKita.depositInvestorLiquidity{value: 500 ether}("CID001");
+        settlementToken.approve(address(gajiKita), 500 ether);
+        vm.prank(investor1);
+        gajiKita.depositInvestorLiquidityToken(500 ether, "CID001");
 
         // Employee withdraws salary - this generates fees that create rewards for investors
         vm.prank(employee1);
@@ -284,9 +295,11 @@ contract GajiKitaTest is Test {
         vm.prank(admin);
         gajiKita.registerCompany(company1, "Company ABC");
 
-        vm.deal(investor1, 5 ether);
+        settlementToken.mint(investor1, 5 ether);
         vm.prank(investor1);
-        gajiKita.depositInvestorLiquidity{value: 5 ether}("CID001");
+        settlementToken.approve(address(gajiKita), 5 ether);
+        vm.prank(investor1);
+        gajiKita.depositInvestorLiquidityToken(5 ether, "CID001");
 
         vm.prank(investor1);
         gajiKita.withdrawAllInvestorLiquidity("CID001");
@@ -297,6 +310,60 @@ contract GajiKitaTest is Test {
         assertTrue(exists);
         assertEq(deposited, 0); // Amount deposited should now be 0 after withdrawal
         assertEq(withdrawnRewards, 0); // withdrawnRewards should be 0 initially
+    }
+
+    function testDisableCompanyPreventsActions() public {
+        vm.prank(admin);
+        gajiKita.registerCompany(company1, "Company ABC");
+
+        vm.prank(admin);
+        gajiKita.disableCompany(company1);
+
+        vm.deal(company1, 1 ether);
+        vm.prank(company1);
+        vm.expectRevert(abi.encodeWithSelector(Errors.CompanyDisabled.selector));
+        gajiKita.lockCompanyLiquidity{value: 1 ether}(1 ether, "CID");
+
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(Errors.CompanyDisabled.selector));
+        gajiKita.addEmployee(employee1, company1, "John Doe", 1000 ether);
+    }
+
+    function testEnableCompanyRestoresActions() public {
+        vm.prank(admin);
+        gajiKita.registerCompany(company1, "Company ABC");
+
+        vm.prank(admin);
+        gajiKita.disableCompany(company1);
+
+        vm.prank(admin);
+        gajiKita.enableCompany(company1);
+
+        vm.deal(company1, 1 ether);
+        vm.prank(company1);
+        gajiKita.lockCompanyLiquidity{value: 1 ether}(1 ether, "CID");
+
+        assertEq(gajiKita.getTotalLiquidity(), 1 ether);
+    }
+
+    function testUpdateCompanyAddressMovesEmployees() public {
+        vm.prank(admin);
+        gajiKita.registerCompany(company1, "Company ABC");
+
+        vm.prank(admin);
+        gajiKita.addEmployee(employee1, company1, "John Doe", 1000 ether);
+
+        vm.prank(admin);
+        gajiKita.updateCompanyAddress(company1, company2);
+
+        (bool existsOld, ) = gajiKita.getCompanyInfo(company1);
+        assertFalse(existsOld);
+
+        (bool existsNew, ) = gajiKita.getCompanyInfo(company2);
+        assertTrue(existsNew);
+
+        (, address companyId, , , , ) = gajiKita.getEmployeeInfo(employee1);
+        assertEq(companyId, company2);
     }
 
     function testUpdateFeeConfig() public {
@@ -337,22 +404,8 @@ contract GajiKitaTest is Test {
         gajiKita.removeAdmin(owner);
     }
 
-    function testReceiveFunction() public {
-        vm.deal(address(this), 1 ether);
-        (bool success, ) = address(gajiKita).call{value: 1 ether}("");
-        assertTrue(success);
-
-        assertEq(address(gajiKita).balance, 1 ether);
-    }
-
     function testIERC721Receiver() public {
-        // Test the IERC721Receiver interface implementation
-        bytes4 selector = gajiKita.onERC721Received(
-            address(0),
-            address(0),
-            1,
-            ""
-        );
+        bytes4 selector = gajiKita.onERC721Received(address(0), address(0), 1, "");
         assertEq(selector, gajiKita.onERC721Received.selector);
     }
 }

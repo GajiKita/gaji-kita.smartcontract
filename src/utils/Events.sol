@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.30;
 
 import {Enums} from "./Enums.sol";
 
@@ -21,4 +21,7 @@ library Events {
     event FeeConfigUpdated(uint256 platformShare, uint256 companyShare, uint256 investorShare, uint256 feeBps);
     event Erc20Initialized(address settlementToken, address agniRouter);
     event PreferredPayoutTokenSet(address indexed employee, address token);
+    event PreferredCompanyPayoutTokenSet(address indexed company, address token);
+    event PreferredInvestorPayoutTokenSet(address indexed investor, address token);
+    event SupportedPayoutTokenAdded(address indexed token);
 }
